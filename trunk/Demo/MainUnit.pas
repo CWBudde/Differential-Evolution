@@ -50,10 +50,15 @@ uses
 
 {$R *.dfm}
 
-function TestFunction(x: Double): Double;
+function TestFunction(x: Double): Double; inline;
 begin
-//  Result := Log10(2 + Abs(Cos(0.0131537 * x)) +  2 * Sin(0.0645 * x));
   Result := Tanh(4 * x);
+end;
+
+function CalculateModel(x: Double; Data: PDoubleArray): Double; inline;
+begin
+  Result := (((((Sqr(x) + Data^[0]) * Sqr(x) + Data^[1]) * Sqr(x) + Data^[2]) *
+      Sqr(x) + Data^[3]) * Sqr(x) + Data^[4]) * x;
 end;
 
 
@@ -67,7 +72,7 @@ end;
 procedure TFmDifferentialEvolution.DEBestCostChanged(
   Sender: TObject; BestCost: Double);
 var
-  x, y  : Double;
+  x     : Double;
   xmax  : Double;
   xinc  : Double;
   Best  : TDEPopulationData;
@@ -82,9 +87,7 @@ begin
     xinc := ReferenceFunction.Period;
     while x <= xmax do
     begin
-      y := (((((Sqr(x) + Best.Data[0]) * Sqr(x) + Best.Data[1]) * Sqr(x) +
-        Best.Data[2]) * Sqr(x) + Best.Data[3]) * Sqr(x) + Best.Data[4]) * x;
-      SeriesOptimized.AddXY(x, y);
+      SeriesOptimized.AddXY(x, CalculateModel(x, Best.DataPointer));
       x := x + xinc;
     end;
   end;
@@ -108,9 +111,7 @@ begin
 
   while x <= xmax do
   begin
-    y := (((((Sqr(x) + Data^[0]) * Sqr(x) + Data^[1]) * Sqr(x) + Data^[2]) *
-      Sqr(x) + Data^[3]) * Sqr(x) + Data^[4]) * x;
-    Error := Error + Sqr(y - TestFunction(x));
+    Error := Error + Sqr(CalculateModel(x, Data) - TestFunction(x));
     x := x + xinc;
   end;
   Result := Log10(1E-20 + Sqrt(Error));
