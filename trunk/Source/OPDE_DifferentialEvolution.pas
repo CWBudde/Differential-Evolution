@@ -104,6 +104,7 @@ type
 
     property Cost: Double read FCost write FCost;
     property Data[Index: Cardinal]: Double read GetData write SetData;
+    property DataPointer: PDoubleArray read FData;
     property Count: Cardinal read FCount;
   end;
 
