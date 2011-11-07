@@ -51,6 +51,7 @@ type
     BestCost: Double) of object;
   TDEGenerationChangedEvent = procedure(Sender: TObject;
     Generation: Integer) of object;
+  TDEUpdateGains = (ugNone, ugPerGeneration, ugAlways);
 
   TDEVariableCollectionItem = class(TCollectionItem)
   private
@@ -115,13 +116,16 @@ type
     FCrossOver           : Double;
     FDifferentialWeight  : Double;
     FBestWeight          : Double;
-    FGains               : array [0..3] of Double;
+    FGains               : array [0..2] of Double;
+    FGainBest            : Double;
     FVariables           : TDEVariableCollection;
     FOnCalculateCosts    : TDECalculateCostEvent;
     FOnBestCostChanged   : TDEBestCostChangedEvent;
     FOnGenerationChanged : TDEGenerationChangedEvent;
     FCalcGenerationCosts : TDECalculateGenerationCosts;
     FDirectSelection     : Boolean;
+    FUpdateInternalGains : TDEUpdateGains;
+    FJitterGains         : PDoubleArray;
     function GetIsRunning: Boolean;
     function GetNumberOfThreads: Cardinal;
     procedure SetBestWeight(const Value: Double);
@@ -131,6 +135,9 @@ type
     procedure SetNumberOfThreads(const Value: Cardinal);
     procedure SetPopulationCount(const Value: Cardinal);
     procedure SetVariables(const Value: TDEVariableCollection);
+    procedure SetDither(const Value: Double);
+    procedure SetDitherPerGeneration(const Value: Boolean);
+    procedure SetJitter(const Value: Double);
   private
     FTotalGenerations       : Integer;
     FCurrentGenerationIndex : Integer;
@@ -142,16 +149,27 @@ type
     FCostCalculationEvent   : TEvent;
     FCriticalSection        : TCriticalSection;
     FThreads                : array of TThread;
+    FDither                 : Double;
+    FDitherPerGeneration    : Boolean;
+    FJitter                 : Double;
+    FUseJitter              : Boolean;
     procedure CreatePopulationData;
     procedure FreePopulationData;
+    procedure FindDifferentPopulations(const Current: Integer; out A: Integer); overload;
+    procedure FindDifferentPopulations(const Current: Integer; out A, B: Integer); overload;
+    procedure FindDifferentPopulations(const Current: Integer; out A, B, C: Integer); overload;
+    procedure FindDifferentPopulations(const Current: Integer; out A, B, C, D: Integer); overload;
     function FindBest(Generation: PPointerArray): Integer;
     function GetBestPopulation: TDEPopulationData;
+    function CalculateJitter(VariableIndex: Integer): Double;
     procedure BuildNextGeneration;
     procedure CalculateCostsDirect(Generation: PPointerArray);
     procedure CalculateCostsThreaded(Generation: PPointerArray);
+    procedure CheckUpdateInternalGains;
     procedure RandomizePopulation;
     procedure SelectFittest;
     procedure UpdateInternalGains;
+    procedure UpdateJitterGains;
   protected
     FBestPopulationIndex : Integer;
     FVariableCount       : Cardinal;
@@ -162,7 +180,10 @@ type
     procedure CrossoverChanged; virtual;
     procedure DifferentialWeightChanged; virtual;
     procedure DirectSelectionChanged; virtual;
+    procedure DitherChanged; virtual;
+    procedure DitherPerGenerationChanged; virtual;
     procedure GenerationChanged; virtual;
+    procedure JitterChanged; virtual;
     procedure PopulationCountChanged; virtual;
     procedure NumberOfThreadsChanged; virtual;
     procedure VariableChanged(Index: Integer); virtual;
@@ -183,12 +204,16 @@ type
     procedure Evolve;
 
     property BestPopulation: TDEPopulationData read GetBestPopulation;
+    property IsRunning: Boolean read GetIsRunning;
+    property CurrentGeneration: Integer read FCurrentGenerationIndex;
   published
     property BestWeight: Double read FBestWeight write SetBestWeight;
     property CrossOver: Double read FCrossOver write SetCrossOver;
+    property Dither: Double read FDither write SetDither;
+    property DitherPerGeneration: Boolean read FDitherPerGeneration write SetDitherPerGeneration default True;
     property DifferentialWeight: Double read FDifferentialWeight write SetDifferentialWeight;
     property DirectSelection: Boolean read FDirectSelection write SetDirectSelection default False;
-    property IsRunning: Boolean read GetIsRunning;
+    property Jitter: Double read FJitter write SetJitter;
     property NumberOfThreads: Cardinal read GetNumberOfThreads write SetNumberOfThreads default 0;
     property PopulationCount: Cardinal read FPopulationCount write SetPopulationCount default 15;
     property Variables: TDEVariableCollection read FVariables write SetVariables;
@@ -499,6 +524,8 @@ begin
   FCalcGenerationCosts := CalculateCostsDirect;
   FTotalGenerations := 0;
   FCurrentGenerationIndex := 0;
+  FUseJitter := False;
+  FDitherPerGeneration := True;
 
   UpdateInternalGains;
 end;
@@ -517,6 +544,10 @@ begin
 
   FreePopulationData;
   FreeAndNil(FVariables);
+
+  if Assigned(FJitterGains) then
+    FreeMem(FJitterGains);
+
   inherited;
 end;
 
@@ -667,51 +698,94 @@ begin
     Assert(FPopulationsCalculated = FPopulationCount);
 end;
 
+procedure TNewDifferentialEvolution.FindDifferentPopulations(
+  const Current: Integer; out A: Integer);
+begin
+  repeat
+    A := Random(FPopulationCount);
+  until (A <> Current) and (A <> FBestPopulationIndex);
+end;
+
+procedure TNewDifferentialEvolution.FindDifferentPopulations(
+  const Current: Integer; out A, B: Integer);
+begin
+  FindDifferentPopulations(Current, A);
+
+  repeat
+    B := Random(FPopulationCount);
+  until (B <> Current) and (B <> FBestPopulationIndex) and (B <> A);
+end;
+
+procedure TNewDifferentialEvolution.FindDifferentPopulations(
+  const Current: Integer; out A, B, C: Integer);
+begin
+  FindDifferentPopulations(Current, A, B);
+
+  repeat
+    C := Random(FPopulationCount);
+  until (C <> Current) and (C <> FBestPopulationIndex) and (C <> B) and
+    (C <> A);
+end;
+
+procedure TNewDifferentialEvolution.FindDifferentPopulations(
+  const Current: Integer; out A, B, C, D: Integer);
+begin
+  FindDifferentPopulations(Current, A, B, C);
+
+  repeat
+    C := Random(FPopulationCount);
+  until (C <> Current) and (C <> FBestPopulationIndex) and (C <> B) and
+    (C <> A) and (D <> A);
+end;
+
 procedure TNewDifferentialEvolution.BuildNextGeneration;
 var
-  RandomPopIndex  : array [0..2] of Integer;
-  PopIndex        : Integer;
-  VarIndex        : Cardinal;
-  VarCount        : Cardinal;
-  BasePopulation  : TDEPopulationData;
-  NewPopulation   : TDEPopulationData;
+  A, B, C        : Integer;
+  Populations    : array [0..2] of TDEPopulationData;
+  PopIndex       : Integer;
+  JitterValue    : Double;
+  VarIndex       : Cardinal;
+  VarCount       : Cardinal;
+  BasePopulation : TDEPopulationData;
+  BestPopulation : TDEPopulationData;
+  NewPopulation  : TDEPopulationData;
 begin
   Assert(FBestPopulationIndex >= 0);
+
+  if FUpdateInternalGains = ugPerGeneration then
+    UpdateInternalGains;
+
+  JitterValue := 0;
 
   for PopIndex := 0 to FPopulationCount - 1 do
   begin
     // Find 3 different populations randomly
-    repeat
-      RandomPopIndex[0] := Random(FPopulationCount);
-    until (RandomPopIndex[0] <> PopIndex) and (RandomPopIndex[0] <> FBestPopulationIndex);
-
-    repeat
-      RandomPopIndex[1] := Random(FPopulationCount);
-    until (RandomPopIndex[1] <> PopIndex) and
-      (RandomPopIndex[1] <> FBestPopulationIndex) and
-      (RandomPopIndex[1] <> RandomPopIndex[0]);
-
-    repeat
-      RandomPopIndex[2] := Random(FPopulationCount);
-    until (RandomPopIndex[2] <> PopIndex) and
-      (RandomPopIndex[2] <> FBestPopulationIndex) and
-      (RandomPopIndex[2] <> RandomPopIndex[1]) and
-      (RandomPopIndex[2] <> RandomPopIndex[0]);
+    FindDifferentPopulations(PopIndex, A, B, C);
 
     BasePopulation := TDEPopulationData(FCurrentGeneration[PopIndex]);
+    Populations[0] := TDEPopulationData(FCurrentGeneration[A]);
+    Populations[1] := TDEPopulationData(FCurrentGeneration[B]);
+    Populations[2] := TDEPopulationData(FCurrentGeneration[C]);
+    BestPopulation := TDEPopulationData(FCurrentGeneration[FBestPopulationIndex]);
     NewPopulation := TDEPopulationData(FNextGeneration[PopIndex]);
 
     // generate trial vector with crossing-over
     VarIndex := Random(FVariableCount);
     VarCount := 0;
 
+    if FUpdateInternalGains = ugAlways then
+      UpdateInternalGains;
+
     // build mutation
     repeat
+      if FUseJitter then
+        JitterValue := CalculateJitter(VarIndex);
+
       NewPopulation.FData[VarIndex] := BasePopulation.FData[VarIndex] +
-        TDEPopulationData(FCurrentGeneration[RandomPopIndex[0]]).FData[VarIndex] * FGains[1] +
-        TDEPopulationData(FCurrentGeneration[RandomPopIndex[1]]).FData[VarIndex] * FGains[2] +
-        TDEPopulationData(FCurrentGeneration[RandomPopIndex[2]]).FData[VarIndex] * FGains[3] +
-        TDEPopulationData(FCurrentGeneration[FBestPopulationIndex]).FData[VarIndex] * FGains[0];
+        Populations[0].FData[VarIndex] * FGains[0] +
+        Populations[1].FData[VarIndex] * FGains[1] +
+        Populations[2].FData[VarIndex] * FGains[2] +
+        BestPopulation.FData[VarIndex] * FGainBest + JitterValue;
       Inc(VarIndex);
       if VarIndex >= FVariableCount then
         VarIndex := 0;
@@ -787,12 +861,24 @@ begin
     RandomizePopulation;
     FCalcGenerationCosts(FCurrentGeneration);
     FBestPopulationIndex := FindBest(FCurrentGeneration);
+    if Assigned(FDriverThread) then
+      TThread.Synchronize(FDriverThread, BestIndexChanged)
+    else
+      BestIndexChanged;
+
     FIsInitialized := True;
   end;
 
   BuildNextGeneration;
   FCalcGenerationCosts(FNextGeneration);
   SelectFittest;
+end;
+
+function TNewDifferentialEvolution.CalculateJitter(
+  VariableIndex: Integer): Double;
+begin
+  with FVariables[VariableIndex] do
+    Result := Random * FJitter * (FMaximum - FMinimum);
 end;
 
 procedure TNewDifferentialEvolution.GenerationChanged;
@@ -819,12 +905,32 @@ begin
   Result := Length(FThreads);
 end;
 
-procedure TNewDifferentialEvolution.UpdateInternalGains;
+procedure TNewDifferentialEvolution.JitterChanged;
 begin
-  FGains[1] :=  FDifferentialWeight;
-  FGains[2] := -FDifferentialWeight;
+  FUseJitter := True;
+  if FUseJitter then
+    UpdateJitterGains;
 end;
 
+procedure TNewDifferentialEvolution.UpdateInternalGains;
+begin
+  FGainBest :=  FBestWeight;
+  FGains[0] :=  FDifferentialWeight + FDither * Random *
+    (1.0 - FDifferentialWeight);
+  FGains[1] := -FGains[0];
+  FGains[2] := -FGainBest;
+end;
+
+
+procedure TNewDifferentialEvolution.UpdateJitterGains;
+var
+  VarIndex : Integer;
+begin
+  ReallocMem(FJitterGains, FVariables.Count * SizeOf(Double));
+  for VarIndex := 0 to FVariables.Count - 1 do
+    with FVariables[VarIndex] do
+      FJitterGains[VarIndex] := FJitter * (FMaximum - FMinimum);
+end;
 
 procedure TNewDifferentialEvolution.CrossoverChanged;
 begin
@@ -833,13 +939,34 @@ end;
 
 procedure TNewDifferentialEvolution.DifferentialWeightChanged;
 begin
-  FGains[1] :=  FDifferentialWeight;
-  FGains[2] := -FDifferentialWeight;
+  FGains[0] :=  FDifferentialWeight;
+  FGains[1] := -FDifferentialWeight;
 end;
 
 procedure TNewDifferentialEvolution.DirectSelectionChanged;
 begin
   // nothing here yet
+end;
+
+procedure TNewDifferentialEvolution.CheckUpdateInternalGains;
+begin
+  if (FDither > 0) then
+    if FDitherPerGeneration then
+      FUpdateInternalGains := ugPerGeneration
+    else
+      FUpdateInternalGains := ugAlways
+  else
+    FUpdateInternalGains := ugNone;
+end;
+
+procedure TNewDifferentialEvolution.DitherChanged;
+begin
+  CheckUpdateInternalGains;
+end;
+
+procedure TNewDifferentialEvolution.DitherPerGenerationChanged;
+begin
+  CheckUpdateInternalGains;
 end;
 
 procedure TNewDifferentialEvolution.NumberOfThreadsChanged;
@@ -880,8 +1007,8 @@ end;
 
 procedure TNewDifferentialEvolution.BestWeightChanged;
 begin
-  FGains[0] := FBestWeight;
-  FGains[3] := -FBestWeight;
+  FGainBest := FBestWeight;
+  FGains[2] := -FBestWeight;
 end;
 
 procedure TNewDifferentialEvolution.VariableChanged(Index: Integer);
@@ -939,6 +1066,34 @@ begin
   begin
     FDirectSelection := Value;
     DirectSelectionChanged;
+  end;
+end;
+
+procedure TNewDifferentialEvolution.SetDither(const Value: Double);
+begin
+  if FDither <> Value then
+  begin
+    FDither := Value;
+    DitherChanged;
+  end;
+end;
+
+procedure TNewDifferentialEvolution.SetDitherPerGeneration(
+  const Value: Boolean);
+begin
+  if FDitherPerGeneration <> Value then
+  begin
+    FDitherPerGeneration := Value;
+    DitherPerGenerationChanged;
+  end;
+end;
+
+procedure TNewDifferentialEvolution.SetJitter(const Value: Double);
+begin
+  if FJitter <> Value then
+  begin
+    FJitter := Value;
+    JitterChanged;
   end;
 end;
 
