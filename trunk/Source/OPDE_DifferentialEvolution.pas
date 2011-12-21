@@ -30,89 +30,18 @@ unit OPDE_DifferentialEvolution;
 
 interface
 
-{$I DAV_Compiler.inc}
+{$I jedi.inc}
 
 {-$DEFINE StartStopExceptions}
 
 uses
-  Types, Classes, SysUtils, SyncObjs;
+  Types, Classes, SysUtils, SyncObjs, OPDE_Chunks;
 
 type
   EDifferentialEvolution = class(Exception);
 
   DoubleArray = array [0 .. $0FFFFFF8] of Double;
   PDoubleArray = ^DoubleArray;
-
-  // chunk types
-  TChunkName = packed record
-  case Integer of
-   0: (AsUInt32 : Cardinal);
-   1: (AsInt32  : Integer);
-   2: (AsChar8  : array [0..3] of AnsiChar);
-  end;
-  PChunkName = ^TChunkName;
-
-  {$A4}
-
-  TCustomChunk = class(TPersistent)
-  protected
-    function GetChunkNameAsString: AnsiString; virtual; abstract;
-    function GetChunkName: TChunkName; virtual; abstract;
-    function GetChunkSize: Cardinal; virtual; abstract;
-  public
-    procedure ReadFromStream(Stream: TStream; ChunkSize: Cardinal); virtual; abstract;
-    procedure WriteToStream(Stream: TStream); virtual; abstract;
-
-    property ChunkName: TChunkName read GetChunkName;
-    property ChunkNameAsString: AnsiString read GetChunkNameAsString;
-    property ChunkSize: Cardinal read GetChunkSize;
-  end;
-
-  TCustomDefinedChunk = class(TCustomChunk)
-  protected
-    function GetChunkNameAsString: AnsiString; override;
-    function GetChunkName: TChunkName; override;
-    class function GetClassChunkName: TChunkName; virtual; abstract;
-  public
-    property ChunkName: TChunkName read GetClassChunkName;
-  end;
-
-  TChunkDifferentialEvolutionHeader = class(TCustomDefinedChunk)
-  private
-    FJitter              : Double;
-    FBestWeight          : Double;
-    FDither              : Double;
-    FCrossOver           : Double;
-    FDifferentialWeight  : Double;
-    FFlags               : Cardinal;
-    FPopulationCount     : Cardinal;
-    FNumberOfThreads     : Cardinal;
-    function GetDirectSelection: Boolean;
-    function GetDitherPerGeneration: Boolean;
-    procedure SetDirectSelection(const Value: Boolean);
-    procedure SetDitherPerGeneration(const Value: Boolean);
-  protected
-    class function GetClassChunkName: TChunkName; override;
-    function GetChunkSize: Cardinal; override;
-
-    procedure AssignTo(Dest: TPersistent); override;
-  public
-    constructor Create; virtual;
-
-    procedure ReadFromStream(Stream: TStream; ChunkSize: Cardinal); override;
-    procedure WriteToStream(Stream: TStream); override;
-
-    property BestWeight: Double read FBestWeight write FBestWeight;
-    property CrossOver: Double read FCrossOver write FCrossOver;
-    property Dither: Double read FDither write FDither;
-    property DitherPerGeneration: Boolean read GetDitherPerGeneration write SetDitherPerGeneration;
-    property DifferentialWeight: Double read FDifferentialWeight write FDifferentialWeight;
-    property DirectSelection: Boolean read GetDirectSelection write SetDirectSelection;
-    property Jitter: Double read FJitter write FJitter;
-    property NumberOfThreads: Cardinal read FNumberOfThreads write FNumberOfThreads;
-    property PopulationCount: Cardinal read FPopulationCount write FPopulationCount;
-  end;
-
 
   TNewDifferentialEvolution = class;
 
@@ -158,7 +87,7 @@ type
     constructor Create(AOwner: TComponent);
   end;
 
-  TDEPopulationData = class(TObject)
+  TDEPopulationData = class(TPersistent)
   private
     FDE    : TNewDifferentialEvolution;
     FData  : PDoubleArray;
@@ -167,6 +96,7 @@ type
     function GetData(Index: Cardinal): Double;
     procedure SetData(Index: Cardinal; const Value: Double);
   protected
+    procedure AssignTo(Dest: TPersistent); override;
     property DifferentialEvolution: TNewDifferentialEvolution read FDE;
   public
     constructor Create(DifferentialEvaluation: TNewDifferentialEvolution); overload;
@@ -209,7 +139,9 @@ type
     procedure SetDither(const Value: Double);
     procedure SetDitherPerGeneration(const Value: Boolean);
     procedure SetJitter(const Value: Double);
+    procedure SetBestPopulation(const Value: TDEPopulationData);
   private
+    FBestPopulation         : TDEPopulationData;
     FTotalGenerations       : Integer;
     FCurrentGenerationIndex : Integer;
     FCurrentPopulation      : Cardinal;
@@ -230,8 +162,7 @@ type
     procedure FindDifferentPopulations(const Current: Integer; out A, B: Integer); overload;
     procedure FindDifferentPopulations(const Current: Integer; out A, B, C: Integer); overload;
     procedure FindDifferentPopulations(const Current: Integer; out A, B, C, D: Integer); overload;
-    function FindBest(Generation: PPointerArray): Integer;
-    function GetBestPopulation: TDEPopulationData;
+    function FindBest(Generation: PPointerArray): TDEPopulationData;
     function CalculateJitter(VariableIndex: Integer): Double;
     procedure BuildNextGeneration;
     procedure CalculateCostsDirect(Generation: PPointerArray);
@@ -241,13 +172,13 @@ type
     procedure SelectFittest;
     procedure UpdateInternalGains;
     procedure UpdateJitterGains;
+    procedure InitializeData;
   protected
-    FBestPopulationIndex : Integer;
-    FVariableCount       : Cardinal;
-    FCurrentGeneration   : PPointerArray;
-    FNextGeneration      : PPointerArray;
+    FVariableCount     : Cardinal;
+    FCurrentGeneration : PPointerArray;
+    FNextGeneration    : PPointerArray;
     procedure BestWeightChanged; virtual;
-    procedure BestIndexChanged; virtual;
+    procedure BestPopulationChanged; virtual;
     procedure CrossoverChanged; virtual;
     procedure DifferentialWeightChanged; virtual;
     procedure DirectSelectionChanged; virtual;
@@ -279,7 +210,7 @@ type
     procedure SaveToStream(Stream: TStream);
     procedure LoadFromStream(Stream: TStream);
 
-    property BestPopulation: TDEPopulationData read GetBestPopulation;
+    property BestPopulation: TDEPopulationData read FBestPopulation write SetBestPopulation;
     property IsRunning: Boolean read GetIsRunning;
     property CurrentGeneration: Integer read FCurrentGenerationIndex;
   published
@@ -315,6 +246,7 @@ resourcestring
   RCStrOptimizerIsRunning = 'Optimizer is running';
   RCStrOptimizerIsNotRunning = 'Optimizer is not running';
   RCStrNoCostFunction = 'No cost function specified!';
+  RCStrReferenceMismatch = 'Reference mismatch';
 
 type
   TDriverThread = class(TThread)
@@ -334,95 +266,6 @@ type
     constructor Create(Owner: TNewDifferentialEvolution;
       Generation: PPointerArray); virtual;
   end;
-
-{ TCustomDefinedChunk }
-
-function TCustomDefinedChunk.GetChunkName: TChunkName;
-begin
-  Result := GetClassChunkName;
-end;
-
-function TCustomDefinedChunk.GetChunkNameAsString: AnsiString;
-begin
-  Result := AnsiString(GetClassChunkName);
-end;
-
-
-{ TChunkDifferentialEvolutionHeader }
-
-constructor TChunkDifferentialEvolutionHeader.Create;
-begin
-  inherited;
-  FJitter             := 0;
-  FFlags              := 0;
-  FBestWeight         := 0;
-  FDither             := 0;
-  FPopulationCount    := 16;
-  FNumberOfThreads    := 0;
-  FCrossOver          := 0;
-  FDifferentialWeight := 0;
-end;
-
-class function TChunkDifferentialEvolutionHeader.GetClassChunkName: TChunkName;
-begin
-  Result.AsChar8 := 'DEhd';
-end;
-
-function TChunkDifferentialEvolutionHeader.GetDirectSelection: Boolean;
-begin
-  Result := (FFlags and $1) <> 0;
-end;
-
-function TChunkDifferentialEvolutionHeader.GetDitherPerGeneration: Boolean;
-begin
-  Result := (FFlags and $2) <> 0;
-end;
-
-procedure TChunkDifferentialEvolutionHeader.SetDirectSelection(
-  const Value: Boolean);
-begin
-  FFlags := (FFlags and $FFFFFFFE) or (Integer(Value = True) and $1);
-end;
-
-procedure TChunkDifferentialEvolutionHeader.SetDitherPerGeneration(
-  const Value: Boolean);
-begin
-  FFlags := (FFlags and $FFFFFFFD) or ((Integer(Value = True) and $1) shl 1);
-end;
-
-procedure TChunkDifferentialEvolutionHeader.AssignTo(Dest: TPersistent);
-begin
-  if Dest is TChunkDifferentialEvolutionHeader then
-    with TChunkDifferentialEvolutionHeader(Dest) do
-    begin
-      FJitter             := Self.FJitter;
-      FFlags              := Self.FFlags;
-      FBestWeight         := Self.FBestWeight;
-      FDither             := Self.FDither;
-      FPopulationCount    := Self.FPopulationCount;
-      FNumberOfThreads    := Self.FNumberOfThreads;
-      FCrossOver          := Self.FCrossOver;
-      FDifferentialWeight := Self.FDifferentialWeight;
-    end
-  else
-    inherited;
-end;
-
-function TChunkDifferentialEvolutionHeader.GetChunkSize: Cardinal;
-begin
-  Result := 5 * SizeOf(Double) + 3 * SizeOf(Integer);
-end;
-
-procedure TChunkDifferentialEvolutionHeader.ReadFromStream(Stream: TStream;
-  ChunkSize: Cardinal);
-begin
-
-end;
-
-procedure TChunkDifferentialEvolutionHeader.WriteToStream(Stream: TStream);
-begin
-
-end;
 
 
 { TDriverThread }
@@ -634,6 +477,21 @@ begin
   inherited;
 end;
 
+procedure TDEPopulationData.AssignTo(Dest: TPersistent);
+begin
+  if Dest is TDEPopulationData then
+    with TDEPopulationData(Dest) do
+    begin
+      if not (FDE = Self.FDE) then
+        raise Exception.Create(RCStrReferenceMismatch);
+      Assert(Count = Self.Count);
+      Move(Self.FData, FData, Self.Count * SizeOf(Double));
+      FCost  := Self.FCost;
+    end
+  else
+    inherited;
+end;
+
 procedure TDEPopulationData.InitializeData;
 var
   Index  : Integer;
@@ -692,6 +550,7 @@ begin
   FCurrentGenerationIndex := 0;
   FUseJitter := False;
   FDitherPerGeneration := True;
+  FBestPopulation := nil;
 
   UpdateInternalGains;
 end;
@@ -796,12 +655,12 @@ begin
   begin
     FTotalGenerations := 0;
     FreePopulationData;
+    FBestPopulation := nil;
   end
   else
     FTotalGenerations := FTotalGenerations - FCurrentGenerationIndex;
 
   FCurrentGenerationIndex := 0;
-
   FIsInitialized := False;
 end;
 
@@ -845,18 +704,41 @@ end;
 
 procedure TNewDifferentialEvolution.SaveToStream(Stream: TStream);
 begin
-  with Stream do
-  begin
-
+  with TChunkDifferentialEvolutionHeader.Create do
+  try
+    Assign(Self);
+    WriteToStream(Stream);
+  finally
+    Free;
   end;
 end;
 
 procedure TNewDifferentialEvolution.LoadFromStream(Stream: TStream);
+var
+  ChunkName : TChunkName;
+  ChunkSize : Cardinal;
 begin
   with Stream do
-  begin
+    while Position < Size do
+    begin
+      // read chunk name
+      Read(ChunkName.AsUInt32, SizeOf(TChunkName));
 
-  end;
+      // read chunk size
+      Read(ChunkSize, SizeOf(Cardinal));
+
+      if ChunkName.AsChar8 = 'DEhd' then
+        with TChunkDifferentialEvolutionHeader.Create do
+        try
+          // read header
+          ReadFromStream(Stream, 0);
+          AssignTo(Self);
+        finally
+          Free;
+        end
+      else
+        Seek(ChunkSize, soFromCurrent);
+    end;
 end;
 
 procedure TNewDifferentialEvolution.RandomizePopulation;
@@ -865,8 +747,16 @@ var
 begin
   for Index := 0 to FPopulationCount - 1 do
     TDEPopulationData(FCurrentGeneration[Index]).InitializeData;
+end;
 
-  FBestPopulationIndex := -1;
+procedure TNewDifferentialEvolution.InitializeData;
+begin
+  RandomizePopulation;
+  FCalcGenerationCosts(FCurrentGeneration);
+
+  BestPopulation := FindBest(FCurrentGeneration);
+
+  FIsInitialized := True;
 end;
 
 procedure TNewDifferentialEvolution.CalculateCostsDirect(Generation: PPointerArray);
@@ -909,7 +799,7 @@ procedure TNewDifferentialEvolution.FindDifferentPopulations(
 begin
   repeat
     A := Random(FPopulationCount);
-  until (A <> Current) and (A <> FBestPopulationIndex);
+  until (A <> Current) and (FCurrentGeneration[A] <> FBestPopulation);
 end;
 
 procedure TNewDifferentialEvolution.FindDifferentPopulations(
@@ -919,7 +809,7 @@ begin
 
   repeat
     B := Random(FPopulationCount);
-  until (B <> Current) and (B <> FBestPopulationIndex) and (B <> A);
+  until (B <> Current) and (FCurrentGeneration[B] <> FBestPopulation) and (B <> A);
 end;
 
 procedure TNewDifferentialEvolution.FindDifferentPopulations(
@@ -929,7 +819,7 @@ begin
 
   repeat
     C := Random(FPopulationCount);
-  until (C <> Current) and (C <> FBestPopulationIndex) and (C <> B) and
+  until (C <> Current) and (FCurrentGeneration[C] <> FBestPopulation) and (C <> B) and
     (C <> A);
 end;
 
@@ -939,9 +829,9 @@ begin
   FindDifferentPopulations(Current, A, B, C);
 
   repeat
-    C := Random(FPopulationCount);
-  until (C <> Current) and (C <> FBestPopulationIndex) and (C <> B) and
-    (C <> A) and (D <> A);
+    D := Random(FPopulationCount);
+  until (C <> Current) and (FCurrentGeneration[D] <> FBestPopulation) and (D <> C) and
+    (D <> B) and (D <> A);
 end;
 
 procedure TNewDifferentialEvolution.BuildNextGeneration;
@@ -953,10 +843,9 @@ var
   VarIndex       : Cardinal;
   VarCount       : Cardinal;
   BasePopulation : TDEPopulationData;
-  BestPopulation : TDEPopulationData;
   NewPopulation  : TDEPopulationData;
 begin
-  Assert(FBestPopulationIndex >= 0);
+  Assert(Assigned(FBestPopulation));
 
   if FUpdateInternalGains = ugPerGeneration then
     UpdateInternalGains;
@@ -972,7 +861,6 @@ begin
     Populations[0] := TDEPopulationData(FCurrentGeneration[A]);
     Populations[1] := TDEPopulationData(FCurrentGeneration[B]);
     Populations[2] := TDEPopulationData(FCurrentGeneration[C]);
-    BestPopulation := TDEPopulationData(FCurrentGeneration[FBestPopulationIndex]);
     NewPopulation := TDEPopulationData(FNextGeneration[PopIndex]);
 
     // generate trial vector with crossing-over
@@ -991,7 +879,7 @@ begin
         Populations[0].FData[VarIndex] * FGains[0] +
         Populations[1].FData[VarIndex] * FGains[1] +
         Populations[2].FData[VarIndex] * FGains[2] +
-        BestPopulation.FData[VarIndex] * FGainBest + JitterValue;
+        FBestPopulation.FData[VarIndex] * FGainBest + JitterValue;
       Inc(VarIndex);
       if VarIndex >= FVariableCount then
         VarIndex := 0;
@@ -1010,28 +898,31 @@ begin
   end;
 end;
 
-function TNewDifferentialEvolution.FindBest(Generation: PPointerArray): Integer;
+function TNewDifferentialEvolution.FindBest(Generation: PPointerArray): TDEPopulationData;
 var
   Best  : Double;
   Index : Integer;
 begin
-  Result := 0;
-  Best := TDEPopulationData(Generation[0]).Cost;
+  Result := TDEPopulationData(Generation[0]);
+  Best := Result.Cost;
 
   for Index := 1 to FPopulationCount - 1 do
     if (TDEPopulationData(Generation[Index]).Cost < Best) then
-      Result := Index;
+    begin
+      Result := TDEPopulationData(Generation[Index]);
+      Best := Result.Cost;
+    end;
 end;
 
 procedure TNewDifferentialEvolution.SelectFittest;
 var
-  Best      : Double;
-  BestIndex : Integer;
+  BestCosts : Double;
+  BestPop   : TDEPopulationData;
   Index     : Integer;
   Cur, Next : TDEPopulationData;
 begin
-  BestIndex := FBestPopulationIndex;
-  Best := TDEPopulationData(FCurrentGeneration[BestIndex]).Cost;
+  BestPop := FBestPopulation;
+  BestCosts := BestPop.Cost;
   for Index := 0 to FPopulationCount - 1 do
   begin
     Cur := TDEPopulationData(FCurrentGeneration[Index]);
@@ -1042,38 +933,21 @@ begin
       Assert(Next.FDE = Cur.FDE);
       Move(Next.FData^, Cur.FData^, Cur.Count * SizeOf(Double));
       Cur.FCost := Next.FCost;
-      if Cur.FCost < Best then
+      if Cur.FCost < BestCosts then
       begin
-        BestIndex := Index;
-        Best := Cur.FCost;
+        BestPop := Cur;
+        BestCosts := Cur.FCost;
       end;
     end;
   end;
 
-  if BestIndex <> FBestPopulationIndex then
-  begin
-    FBestPopulationIndex := BestIndex;
-    if Assigned(FDriverThread) then
-      TThread.Synchronize(FDriverThread, BestIndexChanged)
-    else
-      BestIndexChanged;
-  end;
+  BestPopulation := BestPop;
 end;
 
 procedure TNewDifferentialEvolution.CalculateCurrentGeneration;
 begin
   if not IsInitialized then
-  begin
-    RandomizePopulation;
-    FCalcGenerationCosts(FCurrentGeneration);
-    FBestPopulationIndex := FindBest(FCurrentGeneration);
-    if Assigned(FDriverThread) then
-      TThread.Synchronize(FDriverThread, BestIndexChanged)
-    else
-      BestIndexChanged;
-
-    FIsInitialized := True;
-  end;
+    InitializeData;
 
   BuildNextGeneration;
   FCalcGenerationCosts(FNextGeneration);
@@ -1091,14 +965,6 @@ procedure TNewDifferentialEvolution.GenerationChanged;
 begin
   if Assigned(FOnGenerationChanged) then
     FOnGenerationChanged(Self, FCurrentGenerationIndex);
-end;
-
-function TNewDifferentialEvolution.GetBestPopulation: TDEPopulationData;
-begin
-  if FBestPopulationIndex >= 0 then
-    Result := TDEPopulationData(FCurrentGeneration[FBestPopulationIndex])
-  else
-    Result := nil;
 end;
 
 function TNewDifferentialEvolution.GetIsRunning: Boolean;
@@ -1200,13 +1066,13 @@ begin
   // nothing here yet
 end;
 
-procedure TNewDifferentialEvolution.BestIndexChanged;
+procedure TNewDifferentialEvolution.BestPopulationChanged;
 var
   BestCost : Double;
 begin
   if Assigned(FOnBestCostChanged) then
   begin
-    BestCost := TDEPopulationData(FCurrentGeneration[FBestPopulationIndex]).Cost;
+    BestCost := FBestPopulation.Cost;
     FOnBestCostChanged(Self, BestCost);
   end;
 end;
@@ -1225,6 +1091,19 @@ end;
 procedure TNewDifferentialEvolution.VariableCountChanged;
 begin
   FVariableCount := FVariables.Count;
+end;
+
+procedure TNewDifferentialEvolution.SetBestPopulation(
+  const Value: TDEPopulationData);
+begin
+  if FBestPopulation <> Value then
+  begin
+    FBestPopulation := Value;
+    if Assigned(FDriverThread) then
+      TThread.Synchronize(FDriverThread, BestPopulationChanged)
+    else
+      BestPopulationChanged;
+  end;
 end;
 
 procedure TNewDifferentialEvolution.SetBestWeight(const Value: Double);
