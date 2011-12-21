@@ -31,7 +31,8 @@ requires
   rtl;
 
 contains
-  OPDE_DifferentialEvolution in 'OPDE_DifferentialEvolution.pas';
+  OPDE_DifferentialEvolution in 'OPDE_DifferentialEvolution.pas',
+  OPDE_Chunks in 'OPDE_Chunks.pas';
 
 end.
 
