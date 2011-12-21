@@ -43,6 +43,77 @@ type
   DoubleArray = array [0 .. $0FFFFFF8] of Double;
   PDoubleArray = ^DoubleArray;
 
+  // chunk types
+  TChunkName = packed record
+  case Integer of
+   0: (AsUInt32 : Cardinal);
+   1: (AsInt32  : Integer);
+   2: (AsChar8  : array [0..3] of AnsiChar);
+  end;
+  PChunkName = ^TChunkName;
+
+  {$A4}
+
+  TCustomChunk = class(TPersistent)
+  protected
+    function GetChunkNameAsString: AnsiString; virtual; abstract;
+    function GetChunkName: TChunkName; virtual; abstract;
+    function GetChunkSize: Cardinal; virtual; abstract;
+  public
+    procedure ReadFromStream(Stream: TStream; ChunkSize: Cardinal); virtual; abstract;
+    procedure WriteToStream(Stream: TStream); virtual; abstract;
+
+    property ChunkName: TChunkName read GetChunkName;
+    property ChunkNameAsString: AnsiString read GetChunkNameAsString;
+    property ChunkSize: Cardinal read GetChunkSize;
+  end;
+
+  TCustomDefinedChunk = class(TCustomChunk)
+  protected
+    function GetChunkNameAsString: AnsiString; override;
+    function GetChunkName: TChunkName; override;
+    class function GetClassChunkName: TChunkName; virtual; abstract;
+  public
+    property ChunkName: TChunkName read GetClassChunkName;
+  end;
+
+  TChunkDifferentialEvolutionHeader = class(TCustomDefinedChunk)
+  private
+    FJitter              : Double;
+    FBestWeight          : Double;
+    FDither              : Double;
+    FCrossOver           : Double;
+    FDifferentialWeight  : Double;
+    FFlags               : Cardinal;
+    FPopulationCount     : Cardinal;
+    FNumberOfThreads     : Cardinal;
+    function GetDirectSelection: Boolean;
+    function GetDitherPerGeneration: Boolean;
+    procedure SetDirectSelection(const Value: Boolean);
+    procedure SetDitherPerGeneration(const Value: Boolean);
+  protected
+    class function GetClassChunkName: TChunkName; override;
+    function GetChunkSize: Cardinal; override;
+
+    procedure AssignTo(Dest: TPersistent); override;
+  public
+    constructor Create; virtual;
+
+    procedure ReadFromStream(Stream: TStream; ChunkSize: Cardinal); override;
+    procedure WriteToStream(Stream: TStream); override;
+
+    property BestWeight: Double read FBestWeight write FBestWeight;
+    property CrossOver: Double read FCrossOver write FCrossOver;
+    property Dither: Double read FDither write FDither;
+    property DitherPerGeneration: Boolean read GetDitherPerGeneration write SetDitherPerGeneration;
+    property DifferentialWeight: Double read FDifferentialWeight write FDifferentialWeight;
+    property DirectSelection: Boolean read GetDirectSelection write SetDirectSelection;
+    property Jitter: Double read FJitter write FJitter;
+    property NumberOfThreads: Cardinal read FNumberOfThreads write FNumberOfThreads;
+    property PopulationCount: Cardinal read FPopulationCount write FPopulationCount;
+  end;
+
+
   TNewDifferentialEvolution = class;
 
   TDECalculateCostEvent = function(Sender: TObject; Data: PDoubleArray;
@@ -203,6 +274,11 @@ type
 
     procedure Evolve;
 
+    procedure SaveToFile(FileName: TFileName);
+    procedure LoadFromFile(FileName: TFileName);
+    procedure SaveToStream(Stream: TStream);
+    procedure LoadFromStream(Stream: TStream);
+
     property BestPopulation: TDEPopulationData read GetBestPopulation;
     property IsRunning: Boolean read GetIsRunning;
     property CurrentGeneration: Integer read FCurrentGenerationIndex;
@@ -258,6 +334,96 @@ type
     constructor Create(Owner: TNewDifferentialEvolution;
       Generation: PPointerArray); virtual;
   end;
+
+{ TCustomDefinedChunk }
+
+function TCustomDefinedChunk.GetChunkName: TChunkName;
+begin
+  Result := GetClassChunkName;
+end;
+
+function TCustomDefinedChunk.GetChunkNameAsString: AnsiString;
+begin
+  Result := AnsiString(GetClassChunkName);
+end;
+
+
+{ TChunkDifferentialEvolutionHeader }
+
+constructor TChunkDifferentialEvolutionHeader.Create;
+begin
+  inherited;
+  FJitter             := 0;
+  FFlags              := 0;
+  FBestWeight         := 0;
+  FDither             := 0;
+  FPopulationCount    := 16;
+  FNumberOfThreads    := 0;
+  FCrossOver          := 0;
+  FDifferentialWeight := 0;
+end;
+
+class function TChunkDifferentialEvolutionHeader.GetClassChunkName: TChunkName;
+begin
+  Result.AsChar8 := 'DEhd';
+end;
+
+function TChunkDifferentialEvolutionHeader.GetDirectSelection: Boolean;
+begin
+  Result := (FFlags and $1) <> 0;
+end;
+
+function TChunkDifferentialEvolutionHeader.GetDitherPerGeneration: Boolean;
+begin
+  Result := (FFlags and $2) <> 0;
+end;
+
+procedure TChunkDifferentialEvolutionHeader.SetDirectSelection(
+  const Value: Boolean);
+begin
+  FFlags := (FFlags and $FFFFFFFE) or (Integer(Value = True) and $1);
+end;
+
+procedure TChunkDifferentialEvolutionHeader.SetDitherPerGeneration(
+  const Value: Boolean);
+begin
+  FFlags := (FFlags and $FFFFFFFD) or ((Integer(Value = True) and $1) shl 1);
+end;
+
+procedure TChunkDifferentialEvolutionHeader.AssignTo(Dest: TPersistent);
+begin
+  if Dest is TChunkDifferentialEvolutionHeader then
+    with TChunkDifferentialEvolutionHeader(Dest) do
+    begin
+      FJitter             := Self.FJitter;
+      FFlags              := Self.FFlags;
+      FBestWeight         := Self.FBestWeight;
+      FDither             := Self.FDither;
+      FPopulationCount    := Self.FPopulationCount;
+      FNumberOfThreads    := Self.FNumberOfThreads;
+      FCrossOver          := Self.FCrossOver;
+      FDifferentialWeight := Self.FDifferentialWeight;
+    end
+  else
+    inherited;
+end;
+
+function TChunkDifferentialEvolutionHeader.GetChunkSize: Cardinal;
+begin
+  Result := 5 * SizeOf(Double) + 3 * SizeOf(Integer);
+end;
+
+procedure TChunkDifferentialEvolutionHeader.ReadFromStream(Stream: TStream;
+  ChunkSize: Cardinal);
+begin
+
+end;
+
+procedure TChunkDifferentialEvolutionHeader.WriteToStream(Stream: TStream);
+begin
+
+end;
+
 
 { TDriverThread }
 
@@ -651,6 +817,46 @@ begin
     CreatePopulationData;
 
   CalculateCurrentGeneration;
+end;
+
+procedure TNewDifferentialEvolution.SaveToFile(FileName: TFileName);
+var
+  FileStream : TFileStream;
+begin
+  FileStream := TFileStream.Create(FileName, fmCreate);
+  try
+    SaveToStream(FileStream);
+  finally
+    FreeAndNil(FileStream);
+  end;
+end;
+
+procedure TNewDifferentialEvolution.LoadFromFile(FileName: TFileName);
+var
+  FileStream : TFileStream;
+begin
+  FileStream := TFileStream.Create(FileName, fmOpenRead);
+  try
+    LoadFromStream(FileStream);
+  finally
+    FreeAndNil(FileStream);
+  end;
+end;
+
+procedure TNewDifferentialEvolution.SaveToStream(Stream: TStream);
+begin
+  with Stream do
+  begin
+
+  end;
+end;
+
+procedure TNewDifferentialEvolution.LoadFromStream(Stream: TStream);
+begin
+  with Stream do
+  begin
+
+  end;
 end;
 
 procedure TNewDifferentialEvolution.RandomizePopulation;
