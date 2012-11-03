@@ -16,14 +16,14 @@ type
     MiFile: TMenuItem;
     MiOptimization: TMenuItem;
     MiReset: TMenuItem;
+    MiSingleStep: TMenuItem;
     MiStart: TMenuItem;
     MiStop: TMenuItem;
+    N1: TMenuItem;
     ReferenceFunction: TCustomTeeFunction;
     SeriesOptimized: TLineSeries;
     SeriesReference: TLineSeries;
     StatusBar: TStatusBar;
-    MiSingleStep: TMenuItem;
-    N1: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure MiExitClick(Sender: TObject);
     procedure ReferenceFunctionCalculate(Sender: TCustomTeeFunction;
@@ -72,10 +72,8 @@ end;
 procedure TFmDifferentialEvolution.DEBestCostChanged(
   Sender: TObject; BestCost: Double);
 var
-  x     : Double;
-  xmax  : Double;
-  xinc  : Double;
-  Best  : TDEPopulationData;
+  x, xmax, xinc: Double;
+  Best: TDEPopulationData;
 begin
   Best := DifferentialEvolution.BestPopulation;
   if Assigned(Best) then

@@ -173,6 +173,7 @@ type
     procedure UpdateInternalGains;
     procedure UpdateJitterGains;
     procedure InitializeData;
+    function GetCurrentPopulation(Index: Cardinal): TDEPopulationData;
   protected
     FVariableCount     : Cardinal;
     FCurrentGeneration : PPointerArray;
@@ -211,6 +212,7 @@ type
     procedure LoadFromStream(Stream: TStream);
 
     property BestPopulation: TDEPopulationData read FBestPopulation write SetBestPopulation;
+    property CurrentPopulation[Index: Cardinal]: TDEPopulationData read GetCurrentPopulation;
     property IsRunning: Boolean read GetIsRunning;
     property CurrentGeneration: Integer read FCurrentGenerationIndex;
   published
@@ -676,6 +678,7 @@ begin
     CreatePopulationData;
 
   CalculateCurrentGeneration;
+  Inc(FCurrentGenerationIndex);
 end;
 
 procedure TNewDifferentialEvolution.SaveToFile(FileName: TFileName);
@@ -975,6 +978,15 @@ end;
 function TNewDifferentialEvolution.GetNumberOfThreads: Cardinal;
 begin
   Result := Length(FThreads);
+end;
+
+function TNewDifferentialEvolution.GetCurrentPopulation(
+  Index: Cardinal): TDEPopulationData;
+begin
+  if Assigned(FCurrentGeneration) and (Index < PopulationCount) then
+    Result := TDEPopulationData(FCurrentGeneration[Index])
+  else
+    Result := nil;
 end;
 
 procedure TNewDifferentialEvolution.JitterChanged;
