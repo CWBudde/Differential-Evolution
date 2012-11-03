@@ -144,7 +144,7 @@ end;
 
 function TCustomDefinedChunk.GetChunkNameAsString: AnsiString;
 begin
-  Result := AnsiString(GetClassChunkName);
+  Result := AnsiString(GetClassChunkName.AsChar8);
 end;
 
 
