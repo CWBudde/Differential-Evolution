@@ -80,6 +80,7 @@ type
     FFlags               : Cardinal;
     FPopulationCount     : Cardinal;
     FNumberOfThreads     : Cardinal;
+    FCurrentGeneration   : Cardinal;
     function GetDirectSelection: Boolean;
     function GetDitherPerGeneration: Boolean;
     procedure SetDirectSelection(const Value: Boolean);
@@ -97,6 +98,7 @@ type
 
     property BestWeight: Double read FBestWeight write FBestWeight;
     property CrossOver: Double read FCrossOver write FCrossOver;
+    property CurrentGeneration: Cardinal read FCurrentGeneration write FCurrentGeneration;
     property Dither: Double read FDither write FDither;
     property DitherPerGeneration: Boolean read GetDitherPerGeneration write SetDitherPerGeneration;
     property DifferentialWeight: Double read FDifferentialWeight write FDifferentialWeight;
@@ -161,6 +163,7 @@ begin
   FNumberOfThreads    := 0;
   FCrossOver          := 0;
   FDifferentialWeight := 0;
+  FCurrentGeneration  := 0;
 end;
 
 class function TChunkDifferentialEvolutionHeader.GetClassChunkName: TChunkName;
@@ -181,13 +184,13 @@ end;
 procedure TChunkDifferentialEvolutionHeader.SetDirectSelection(
   const Value: Boolean);
 begin
-  FFlags := (FFlags and $FFFFFFFE) or (Integer(Value = True) and $1);
+  FFlags := (FFlags and (not 1)) or (Cardinal(Value = True) and $1);
 end;
 
 procedure TChunkDifferentialEvolutionHeader.SetDitherPerGeneration(
   const Value: Boolean);
 begin
-  FFlags := (FFlags and $FFFFFFFD) or ((Integer(Value = True) and $1) shl 1);
+  FFlags := (FFlags and (not 2)) or ((Cardinal(Value = True) and $1) shl 1);
 end;
 
 procedure TChunkDifferentialEvolutionHeader.AssignTo(Dest: TPersistent);
@@ -203,6 +206,7 @@ begin
       FNumberOfThreads    := Self.FNumberOfThreads;
       FCrossOver          := Self.FCrossOver;
       FDifferentialWeight := Self.FDifferentialWeight;
+      FCurrentGeneration  := Self.FCurrentGeneration;
     end
   else
   if Dest is TNewDifferentialEvolution then
@@ -215,6 +219,7 @@ begin
       NumberOfThreads    := Self.FNumberOfThreads;
       CrossOver          := Self.FCrossOver;
       DifferentialWeight := Self.FDifferentialWeight;
+      CurrentGeneration  := Self.FCurrentGeneration;
     end
   else
     inherited;
@@ -222,7 +227,7 @@ end;
 
 function TChunkDifferentialEvolutionHeader.GetChunkSize: Cardinal;
 begin
-  Result := 5 * SizeOf(Double) + 3 * SizeOf(Integer);
+  Result := 5 * SizeOf(Double) + 4 * SizeOf(Integer);
 end;
 
 procedure TChunkDifferentialEvolutionHeader.ReadFromStream(Stream: TStream;
@@ -239,6 +244,7 @@ begin
     Read(FFlags, SizeOf(Cardinal));
     Read(FPopulationCount, SizeOf(Cardinal));
     Read(FNumberOfThreads, SizeOf(Cardinal));
+    Read(FCurrentGeneration, SizeOf(Cardinal));
   end;
 end;
 
@@ -263,6 +269,7 @@ begin
     Write(FFlags, SizeOf(Cardinal));
     Write(FPopulationCount, SizeOf(Cardinal));
     Write(FNumberOfThreads, SizeOf(Cardinal));
+    Write(FCurrentGeneration, SizeOf(Cardinal));
   end;
 end;
 
